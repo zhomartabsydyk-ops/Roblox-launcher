@@ -25,7 +25,7 @@ jobs:
           flutter create --project-name rbx_launcher --org com.example app
           cp pubspec.yaml app/pubspec.yaml
           cp main.dart app/lib/main.dart
-          cp roblox_api.dart app/lib/roblox_api.dart
+          cp roblox_api.dart app/lib/roblox_api.dartsed -i 's|<application|<uses-permission android:name="android.permission.INTERNET"/><application|' app/android/app/src/main/AndroidManifest.xml
           python3 - <<'EOF'
           p = "app/android/app/src/main/AndroidManifest.xml"
           s = open(p, encoding="utf-8").read()
