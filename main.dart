@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -47,6 +48,130 @@ class AppSettings extends ChangeNotifier {
 }
 
 final settings = AppSettings();
+
+/// Сохранённый ник (показывается на главной и в панели друзей)
+final myNick = ValueNotifier<String>('');
+
+class SpaceBackground extends StatelessWidget {
+  const SpaceBackground({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final top = Color.lerp(Colors.black, settings.color, settings.amoled ? 0.16 : 0.35)!;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [top, Colors.black],
+        ),
+      ),
+      child: CustomPaint(painter: _StarsPainter(), child: const SizedBox.expand()),
+    );
+  }
+}
+
+class _StarsPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rnd = Random(7);
+    final brush = Paint();
+    for (var i = 0; i < 90; i++) {
+      final x = rnd.nextDouble() * size.width;
+      final y = rnd.nextDouble() * size.height;
+      final r = rnd.nextDouble() * 1.4 + 0.3;
+      brush.color = Colors.white.withOpacity(rnd.nextDouble() * 0.6 + 0.2);
+      canvas.drawCircle(Offset(x, y), r, brush);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+class FriendsPanel extends StatefulWidget {
+  const FriendsPanel({super.key});
+  @override
+  State<FriendsPanel> createState() => _FriendsPanelState();
+}
+
+class _FriendsPanelState extends State<FriendsPanel> {
+  List<Map<String, dynamic>> friends = [];
+  Map<int, String> pics = {};
+  bool loading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    myNick.addListener(load);
+    load();
+  }
+
+  @override
+  void dispose() {
+    myNick.removeListener(load);
+    super.dispose();
+  }
+
+  Future<void> load() async {
+    final nick = myNick.value;
+    if (nick.isEmpty) {
+      if (mounted) setState(() => friends = []);
+      return;
+    }
+    setState(() => loading = true);
+    final u = await api.findUser(nick);
+    if (u == null) {
+      if (!mounted) return;
+      setState(() {
+        loading = false;
+        friends = [];
+      });
+      return;
+    }
+    final f = await api.friends(u['id'] as int);
+    final p = await api.avatars([for (final e in f.take(20)) e['id'] as int]);
+    if (!mounted) return;
+    setState(() {
+      friends = f;
+      pics = p;
+      loading = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(settings.radius)),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Друзья (${friends.length})',
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            if (loading) const Padding(padding: EdgeInsets.only(top: 8), child: LinearProgressIndicator()),
+            if (myNick.value.isEmpty)
+              const Padding(
+                padding: EdgeInsets.only(top: 8),
+                child: Text('Введи свой ник во вкладке «Профиль», и друзья появятся здесь.'),
+              ),
+            for (final f in friends.take(10))
+              ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: CircleAvatar(
+                  backgroundImage: pics[f['id']] != null ? NetworkImage(pics[f['id']]!) : null,
+                ),
+                title: Text((f['displayName'] ?? f['name'] ?? '').toString()),
+                subtitle: Text('@${f['name'] ?? ''}'),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 // ============================================================
 // Избранные игры
@@ -149,6 +274,8 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await settings.load();
   await Favorites.load();
+  final prefs = await SharedPreferences.getInstance();
+  myNick.value = prefs.getString('nick') ?? '';
   runApp(const LauncherApp());
 }
 
@@ -169,8 +296,8 @@ class LauncherApp extends StatelessWidget {
           debugShowCheckedModeBanner: false,
           theme: ThemeData(
             useMaterial3: true,
-            colorScheme: scheme,
-            scaffoldBackgroundColor: settings.amoled ? Colors.black : scheme.surface,
+            colorScheme: scheme.copyWith(surfaceContainerLow: const Color(0x26FFFFFF)),
+            scaffoldBackgroundColor: Colors.black,
           ),
           home: const Shell(),
         );
@@ -200,17 +327,68 @@ class _ShellState extends State<Shell> {
           CatalogPage(),
           StylePage(),
         ];
+        const icons = [
+          Icons.home_outlined,
+          Icons.sports_esports_outlined,
+          Icons.person_outline,
+          Icons.checkroom_outlined,
+          Icons.palette_outlined,
+        ];
+        const iconsOn = [
+          Icons.home,
+          Icons.sports_esports,
+          Icons.person,
+          Icons.checkroom,
+          Icons.palette,
+        ];
+        const labels = ['Главная', 'Игры', 'Профиль', 'Каталог', 'Стиль'];
+        final content = Stack(
+          children: [
+            const Positioned.fill(child: SpaceBackground()),
+            Positioned.fill(
+              child: SafeArea(child: IndexedStack(index: tab, children: pages)),
+            ),
+          ],
+        );
+        final wide = MediaQuery.of(context).size.width >= 700;
+        if (wide) {
+          return Scaffold(
+            body: Row(
+              children: [
+                SafeArea(
+                  child: NavigationRail(
+                    backgroundColor: Colors.black.withOpacity(0.55),
+                    selectedIndex: tab,
+                    onDestinationSelected: (i) => setState(() => tab = i),
+                    labelType: NavigationRailLabelType.all,
+                    destinations: [
+                      for (var i = 0; i < labels.length; i++)
+                        NavigationRailDestination(
+                          icon: Icon(icons[i]),
+                          selectedIcon: Icon(iconsOn[i]),
+                          label: Text(labels[i]),
+                        ),
+                    ],
+                  ),
+                ),
+                Expanded(child: content),
+              ],
+            ),
+          );
+        }
         return Scaffold(
-          body: SafeArea(child: IndexedStack(index: tab, children: pages)),
+          body: content,
           bottomNavigationBar: NavigationBar(
+            backgroundColor: Colors.black.withOpacity(0.75),
             selectedIndex: tab,
             onDestinationSelected: (i) => setState(() => tab = i),
-            destinations: const [
-              NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home), label: 'Главная'),
-              NavigationDestination(icon: Icon(Icons.sports_esports_outlined), selectedIcon: Icon(Icons.sports_esports), label: 'Игры'),
-              NavigationDestination(icon: Icon(Icons.person_outline), selectedIcon: Icon(Icons.person), label: 'Профиль'),
-              NavigationDestination(icon: Icon(Icons.checkroom_outlined), selectedIcon: Icon(Icons.checkroom), label: 'Каталог'),
-              NavigationDestination(icon: Icon(Icons.palette_outlined), selectedIcon: Icon(Icons.palette), label: 'Стиль'),
+            destinations: [
+              for (var i = 0; i < labels.length; i++)
+                NavigationDestination(
+                  icon: Icon(icons[i]),
+                  selectedIcon: Icon(iconsOn[i]),
+                  label: labels[i],
+                ),
             ],
           ),
         );
@@ -323,7 +501,7 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     final c = settings.color;
-    return ListView(
+    final mainList = ListView(
       padding: const EdgeInsets.all(12),
       children: [
         Container(
@@ -341,11 +519,16 @@ class _HomePageState extends State<HomePage> {
             mainAxisAlignment: MainAxisAlignment.end,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('RBX Launcher',
+              ValueListenableBuilder<String>(
+                valueListenable: myNick,
+                builder: (_, n, __) => Text(
+                  n.isEmpty ? 'Добро пожаловать, астронавт 🚀' : 'С возвращением, $n 🚀',
                   style: Theme.of(context)
                       .textTheme
                       .headlineSmall
-                      ?.copyWith(fontWeight: FontWeight.bold)),
+                      ?.copyWith(fontWeight: FontWeight.bold),
+                ),
+              ),
               const Text('Ищи игры, смотри профили, запускай в один тап'),
             ],
           ),
@@ -408,6 +591,26 @@ class _HomePageState extends State<HomePage> {
           ),
         ),
       ],
+    );
+    return LayoutBuilder(
+      builder: (context, box) {
+        if (box.maxWidth >= 800) {
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(child: mainList),
+              SizedBox(
+                width: 300,
+                child: ListView(
+                  padding: const EdgeInsets.fromLTRB(0, 12, 12, 12),
+                  children: [const FriendsPanel()],
+                ),
+              ),
+            ],
+          );
+        }
+        return mainList;
+      },
     );
   }
 }
@@ -573,6 +776,7 @@ class _ProfilePageState extends State<ProfilePage> {
     final fp = await api.avatars([for (final e in f.take(30)) e['id'] as int]);
     final p = await SharedPreferences.getInstance();
     await p.setString('nick', nick);
+    myNick.value = nick;
     if (!mounted) return;
     setState(() {
       user = u;
