@@ -29,12 +29,30 @@ class RobloxApi {
 
   /// Поиск игр по ключевому слову
   Future<List<Map<String, dynamic>>> searchGames(String query) async {
-    final r = await http.get(Uri.parse(
-      'https://games.roblox.com/v1/games/list'
-      '?model.keyword=${Uri.encodeQueryComponent(query)}&model.maxRows=24',
-    ));
-    if (r.statusCode != 200) return [];
-    return List<Map<String, dynamic>>.from(jsonDecode(r.body)['games'] ?? []);
+    try {
+      final r = await http.get(Uri.parse(
+        'https://apis.roblox.com/search-api/omni-search'
+        '?searchQuery=${Uri.encodeQueryComponent(query)}'
+        '&sessionId=3f1c2b7e-9a41-4d6e-8c55-2b7f0e1a9d34&pageType=all',
+      ));
+      if (r.statusCode != 200) return [];
+      final groups = (jsonDecode(r.body)['searchResults'] as List?) ?? [];
+      final out = <Map<String, dynamic>>[];
+      for (final g in groups) {
+        if (g['contentGroupType'] != 'Game') continue;
+        for (final c in (g['contents'] as List)) {
+          if (c['rootPlaceId'] == null) continue;
+          out.add({
+            'name': c['name'],
+            'playerCount': c['playerCount'] ?? 0,
+            'placeId': c['rootPlaceId'],
+          });
+        }
+      }
+      return out;
+    } catch (_) {
+      return [];
+    }
   }
 
   /// Миниатюры аватаров по списку userId
